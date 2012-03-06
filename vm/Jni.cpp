@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <signal.h>
 
 /*
 Native methods and interaction with the GC
@@ -509,7 +510,8 @@ static jobject addGlobalReference(Object* obj) {
                 } else {
                     gDvm.jniGlobalRefTable.dump("JNI global");
                     LOGE("Excessive JNI global references (%d)", count);
-                    dvmAbort();
+                    kill(getpid(),SIGSTOP);
+                    //dvmAbort();
                 }
             }
         }
