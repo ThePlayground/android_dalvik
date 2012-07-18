@@ -97,11 +97,9 @@ typedef struct SSARepresentation {
     int numUses;
     int *uses;
     bool *fpUse;
-    bool *wideUse;
     int numDefs;
     int *defs;
     bool *fpDef;
-    bool *wideDef;
 } SSARepresentation;
 
 /*

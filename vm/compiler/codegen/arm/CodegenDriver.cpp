@@ -1422,7 +1422,7 @@ static void genInterpSingleStep(CompilationUnit *cUnit, MIR *mir)
     opReg(cUnit, kOpBlx, r2);
 }
 
-#if defined(_ARMV5TE) || defined(_ARMV5TE_VFP) || defined(__ARM_ARCH_6__)
+#if defined(_ARMV5TE) || defined(_ARMV5TE_VFP) || defined(_ARMV6J) || defined(_ARMV6_VFP)
 /*
  * To prevent a thread in a monitor wait from blocking the Jit from
  * resetting the code cache, heavyweight monitor lock will not
@@ -2294,9 +2294,7 @@ static bool handleEasyMultiply(CompilationUnit *cUnit,
     // Can we simplify this multiplication?
     bool powerOfTwo = false;
     bool popCountLE2 = false;
-#ifndef NDEBUG
-    bool powerOfTwoMinusOne = false; // used only in assert
-#endif
+    bool powerOfTwoMinusOne = false;
     if (lit < 2) {
         // Avoid special cases.
         return false;
@@ -2305,9 +2303,7 @@ static bool handleEasyMultiply(CompilationUnit *cUnit,
     } else if (isPopCountLE2(lit)) {
         popCountLE2 = true;
     } else if (isPowerOfTwo(lit + 1)) {
-#ifndef NDEBUG
         powerOfTwoMinusOne = true;
-#endif
     } else {
         return false;
     }
@@ -3724,12 +3720,7 @@ static bool handleExecuteInlineC(CompilationUnit *cUnit, MIR *mir)
     int operation = dInsn->vB;
     unsigned int i;
     const InlineOperation* inLineTable = dvmGetInlineOpsTable();
-    uintptr_t fn = 0;
-    if (operation < INLINE_EX_START) {
-        fn = (int) inLineTable[operation].func;
-    } else {
-        fn = (int)dvmInlineOpsExFunc(operation);
-    }
+    uintptr_t fn = (int) inLineTable[operation].func;
     if (fn == 0) {
         dvmCompilerAbort(cUnit);
     }
@@ -3739,30 +3730,16 @@ static bool handleExecuteInlineC(CompilationUnit *cUnit, MIR *mir)
     dvmCompilerClobber(cUnit, r7);
     int offset = offsetof(Thread, interpSave.retval);
     opRegRegImm(cUnit, kOpAdd, r4PC, r6SELF, offset);
-#ifdef INLINE_ARG_EXPANDED
-            switch( dInsn->vA ){
-                case 7:
-                    loadValueDirect(cUnit, dvmCompilerGetSrc(cUnit, mir, 6), r7);
-                    opImm(cUnit, kOpPush, (1<<r7));
-                    /* fall through */
-                case 6:
-                    loadValueDirect(cUnit, dvmCompilerGetSrc(cUnit, mir, 5), r7);
-                    opImm(cUnit, kOpPush, (1<<r7));
-                    /* fall through */
-                case 5:
-                    loadValueDirect(cUnit, dvmCompilerGetSrc(cUnit, mir, 4), r7);
+#ifdef INLINE_ARG5
+            if( dInsn->vA == 5 ){
+                loadValueDirect(cUnit, dvmCompilerGetSrc(cUnit, mir, 4), r7);
             }
-            opImm(cUnit, kOpPush, (1<<r4PC) | (1<<r7));
-            LOAD_FUNC_ADDR(cUnit, r4PC, fn);
-            genExportPC(cUnit, mir);
-#else
+#endif
     opImm(cUnit, kOpPush, (1<<r4PC) | (1<<r7));
     LOAD_FUNC_ADDR(cUnit, r4PC, fn);
     genExportPC(cUnit, mir);
-#endif
-
-#ifdef INLINE_ARG_EXPANDED
-            if( dInsn->vA >= 5  ){
+#ifdef INLINE_ARG5
+            if( dInsn->vA == 5 ){
                 for (i=0; i < 4; i++) {
                     loadValueDirect(cUnit, dvmCompilerGetSrc(cUnit, mir, i), i);
                 }
@@ -3777,15 +3754,7 @@ static bool handleExecuteInlineC(CompilationUnit *cUnit, MIR *mir)
     }
 #endif
     opReg(cUnit, kOpBlx, r4PC);
-#ifdef INLINE_ARG_EXPANDED
-    if( dInsn->vA > 5 ){
-        opRegImm(cUnit, kOpAdd, r13sp, 16);
-    } else {
-        opRegImm(cUnit, kOpAdd, r13sp, 8);
-    }
-#else
     opRegImm(cUnit, kOpAdd, r13sp, 8);
-#endif
     /* NULL? */
     ArmLIR *branchOver = genCmpImmBranch(cUnit, kArmCondNe, r0, 0);
     loadConstant(cUnit, r0, (int) (cUnit->method->insns + mir->offset));
@@ -3851,9 +3820,6 @@ static bool handleExecuteInline(CompilationUnit *cUnit, MIR *mir)
         case INLINE_FLOAT_TO_INT_BITS:
         case INLINE_DOUBLE_TO_LONG_BITS:
             return handleExecuteInlineC(cUnit, mir);
-    }
-    if (dvmInlineOpsExVerify(dInsn->vB)) {
-        return handleExecuteInlineC(cUnit, mir);
     }
     dvmCompilerAbort(cUnit);
     return false; // Not reachable; keeps compiler happy.
@@ -4050,13 +4016,6 @@ static const char *extendedMIROpNames[kMirOpLast - kMirOpFirst] = {
     "kMirOpCheckInlinePrediction",
 };
 
-
-__attribute__((weak)) bool genHoistedChecksForCountUpLoopThumb(CompilationUnit *cUnit,
-                                                                MIR *mir)
-{
-    return false;
-}
-
 /*
  * vA = arrayReg;
  * vB = idxReg;
@@ -4067,8 +4026,6 @@ __attribute__((weak)) bool genHoistedChecksForCountUpLoopThumb(CompilationUnit *
  */
 static void genHoistedChecksForCountUpLoop(CompilationUnit *cUnit, MIR *mir)
 {
-    if(genHoistedChecksForCountUpLoopThumb(cUnit, mir))
-        return;
     /*
      * NOTE: these synthesized blocks don't have ssa names assigned
      * for Dalvik registers.  However, because they dominate the following
@@ -4085,11 +4042,9 @@ static void genHoistedChecksForCountUpLoop(CompilationUnit *cUnit, MIR *mir)
     /* regArray <- arrayRef */
     rlArray = loadValue(cUnit, rlArray, kCoreReg);
     rlIdxEnd = loadValue(cUnit, rlIdxEnd, kCoreReg);
-    if (!dvmIsBitSet(cUnit->regPool->nullCheckedRegs, mir->dalvikInsn.vA)){
-        dvmSetBit(cUnit->regPool->nullCheckedRegs, mir->dalvikInsn.vA);
-        genRegImmCheck(cUnit, kArmCondEq, rlArray.lowReg, 0, 0,
-                       (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
-    }
+    genRegImmCheck(cUnit, kArmCondEq, rlArray.lowReg, 0, 0,
+                   (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
+
     /* regLength <- len(arrayRef) */
     regLength = dvmCompilerAllocTemp(cUnit);
     loadWordDisp(cUnit, rlArray.lowReg, lenOffset, regLength);
@@ -4114,11 +4069,6 @@ static void genHoistedChecksForCountUpLoop(CompilationUnit *cUnit, MIR *mir)
                    (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
 }
 
-__attribute__((weak)) bool genHoistedChecksForCountDownLoopThumb(CompilationUnit *cUnit,
-                                                                MIR *mir)
-{
-    return false;
-}
 /*
  * vA = arrayReg;
  * vB = idxReg;
@@ -4129,9 +4079,6 @@ __attribute__((weak)) bool genHoistedChecksForCountDownLoopThumb(CompilationUnit
  */
 static void genHoistedChecksForCountDownLoop(CompilationUnit *cUnit, MIR *mir)
 {
-    if(genHoistedChecksForCountDownLoopThumb(cUnit, mir))
-        return;
-
     DecodedInstruction *dInsn = &mir->dalvikInsn;
     const int lenOffset = OFFSETOF_MEMBER(ArrayObject, length);
     const int regLength = dvmCompilerAllocTemp(cUnit);
@@ -4142,11 +4089,8 @@ static void genHoistedChecksForCountDownLoop(CompilationUnit *cUnit, MIR *mir)
     /* regArray <- arrayRef */
     rlArray = loadValue(cUnit, rlArray, kCoreReg);
     rlIdxInit = loadValue(cUnit, rlIdxInit, kCoreReg);
-    if (!dvmIsBitSet(cUnit->regPool->nullCheckedRegs, mir->dalvikInsn.vA)){
-        dvmSetBit(cUnit->regPool->nullCheckedRegs, mir->dalvikInsn.vA);
-        genRegImmCheck(cUnit, kArmCondEq, rlArray.lowReg, 0, 0,
-                       (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
-    }
+    genRegImmCheck(cUnit, kArmCondEq, rlArray.lowReg, 0, 0,
+                   (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
 
     /* regLength <- len(arrayRef) */
     loadWordDisp(cUnit, rlArray.lowReg, lenOffset, regLength);
@@ -4163,20 +4107,12 @@ static void genHoistedChecksForCountDownLoop(CompilationUnit *cUnit, MIR *mir)
                    (ArmLIR *) cUnit->loopAnalysis->branchToPCR);
 }
 
-__attribute__((weak)) bool genHoistedLowerBoundCheckThumb(CompilationUnit *cUnit,
-                                                                MIR *mir)
-{
-    return false;
-}
 /*
  * vA = idxReg;
  * vB = minC;
  */
 static void genHoistedLowerBoundCheck(CompilationUnit *cUnit, MIR *mir)
 {
-    if(genHoistedLowerBoundCheckThumb(cUnit, mir))
-        return;
-
     DecodedInstruction *dInsn = &mir->dalvikInsn;
     const int minC = dInsn->vB;
     RegLocation rlIdx = cUnit->regLocation[mir->dalvikInsn.vA];
@@ -5055,11 +4991,5 @@ LocalOptsFuncMap localOptsFunMap = {
     storeBaseIndexed,
     dvmCompilerRegClassBySize,
     encodeShift,
-    opRegReg,
-    opCondBranch,
-    genIT,
-    genBarrier,
-    modifiedImmediate,
-    genRegImmCheck,
 };
 

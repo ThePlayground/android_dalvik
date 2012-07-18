@@ -223,8 +223,6 @@ typedef struct CompilationUnit {
     bool hasClassLiterals;              // Contains class ptrs used as literals
     bool hasLoop;                       // Contains a loop
     bool hasInvoke;                     // Contains an invoke instruction
-    bool hasMonitor;                    // Contains monitor instruction
-    bool hasVolatile;                   // Contains volatile instruction
     bool heapMemOp;                     // Mark mem ops for self verification
     bool usesLinkRegister;              // For self-verification only
     int profileCodeSize;                // Size of the profile prefix in bytes
@@ -282,7 +280,6 @@ typedef struct CompilationUnit {
     bool quitLoopMode;                  // cold path/complex bytecode
     void *labelList;
 
-    void *extraData;                    // placeholder
 } CompilationUnit;
 
 #if defined(WITH_SELF_VERIFICATION)
